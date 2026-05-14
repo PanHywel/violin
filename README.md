@@ -2,7 +2,7 @@
 
 **Open-source Video Translation Skill.**
 
-[🌐 Live demo](https://violin-ai.com) · [📝 Blog post](https://www.together.ai/blog/violin-open-source-translation-skill) · [📜 MIT License](https://github.com/shang-zhu/violin/blob/main/LICENSE)
+[🌐 Live demo](https://www.violin-ai.com) · [📝 Blog post](https://www.together.ai/blog/violin-open-source-translation-skill) · [📜 MIT License](https://github.com/shang-zhu/violin/blob/main/LICENSE)
 
 <p align="left">
   <img src="assets/logo.png" alt="Violin logo" width="256">
@@ -30,7 +30,7 @@ Available as a **CLI**, a **FastAPI web app**, and a **Claude Code skill**.
 
 ### Try it without installing anything
 
-The live demo runs at **<https://violin-ai.com>** — drop a short clip in, get a dubbed video out in a few minutes.
+The live demo runs at **<https://www.violin-ai.com>** — drop a short clip in, get a dubbed video out in a few minutes.
 
 ### Run locally
 
