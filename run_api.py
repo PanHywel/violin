@@ -7,12 +7,35 @@ Usage:
 """
 
 import argparse
+import glob
+import shutil
 import sys
+import tempfile
 
 import uvicorn
 
 from pipeline import config as pipeline_config
 from pipeline.llm_client import validate_env
+
+
+def _cleanup_orphan_temp_dirs() -> None:
+    """Remove stale temp dirs left behind by previous runs that crashed
+    or were SIGKILLed before their `finally` cleanup blocks ran.
+
+    These accumulate in /tmp under predictable prefixes:
+      audiochunk_*  — pipeline/extractor.py:split_audio
+      vidmerge_*    — pipeline/merger.py:prepare_merge
+      vidtrans_*    — pipeline/orchestrator.py:dub_video
+    Each is purely intermediate state — safe to delete at startup.
+    """
+    tmp = tempfile.gettempdir()
+    removed = 0
+    for prefix in ("audiochunk_", "vidmerge_", "vidtrans_"):
+        for path in glob.glob(f"{tmp}/{prefix}*"):
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+    if removed:
+        print(f"Cleaned {removed} orphan temp dir(s) from {tmp}/", file=sys.stderr)
 
 
 def main() -> None:
@@ -26,6 +49,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    _cleanup_orphan_temp_dirs()
     pipeline_config.load(args.config)
 
     cfg = pipeline_config.get()
