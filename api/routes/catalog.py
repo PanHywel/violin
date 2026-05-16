@@ -171,7 +171,7 @@ def match_voice(payload: VoiceMatchRequest):
                 model=model,
                 messages=messages,
                 temperature=0.1,
-                max_tokens=400,
+                max_tokens=4000,
             )
             msg = response.choices[0].message
             raw = (msg.content or "").strip()
