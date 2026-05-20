@@ -354,6 +354,12 @@ def transcribe(
     chunk_seconds = tcfg.get("chunk_seconds", 600)
     workers = tcfg.get("parallel_workers", _DEFAULT_TRANSCRIBE_WORKERS)
 
+    # Some backends (e.g. Volcengine ASR V3 with audio URL) submit the
+    # whole file at once — skip local chunking in that case.
+    if getattr(client, "skip_chunking", False):
+        print(f"      Transcribing via URL…")
+        return _transcribe_single(audio_path, client, model)
+
     chunks = split_audio(audio_path, chunk_seconds=chunk_seconds)
 
     if len(chunks) == 1:

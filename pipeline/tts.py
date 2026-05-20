@@ -23,14 +23,17 @@ def get_tts_model() -> str:
 
 
 def _backend(provider: str | None = None):
-    """Resolve the active provider's backend module."""
     p = provider or get_tts_provider()
     if p == "elevenlabs":
         from . import tts_elevenlabs as _imp
     elif p == "openai":
         from . import tts_openai as _imp
-    else:
+    elif p == "volcengine":
+        from . import tts_volcengine as _imp
+    elif p in {"together", "cartesia"}:
         from . import tts_together as _imp
+    else:
+        raise ValueError(f"Unsupported TTS provider: {p}")
     return _imp
 
 
@@ -77,15 +80,24 @@ def _make_client(
             )
         return OpenAI(api_key=api_key)
 
-    # cartesia (default) — Together-hosted; honor user-provided key, fall back to env.
-    from together import Together
-    api_key = together_api_key or os.environ.get("TOGETHER_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "TOGETHER_API_KEY is not set. Provide one via env var or "
-            "pass together_api_key= when calling synthesize_segments."
-        )
-    return Together(api_key=api_key)
+    if provider == "volcengine":
+        return {
+            "api_key": os.environ.get("VOLCENGINE_TTS_API_KEY"),
+            "resource_id": os.environ.get("VOLCENGINE_TTS_RESOURCE_ID"),
+            "base_url": os.environ.get("VOLCENGINE_TTS_BASE_URL"),
+        }
+
+    if provider in {"together", "cartesia"}:
+        from together import Together
+        api_key = together_api_key or os.environ.get("TOGETHER_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "TOGETHER_API_KEY is not set. Provide one via env var or "
+                "pass together_api_key= when calling synthesize_segments."
+            )
+        return Together(api_key=api_key)
+
+    raise ValueError(f"Unsupported TTS provider: {provider}")
 
 
 def synthesize_segments(

@@ -1,4 +1,4 @@
-"""Factory for translation + transcription clients — supports Together AI and OpenAI."""
+"""Factory for translation + transcription clients."""
 
 from __future__ import annotations
 
@@ -9,18 +9,10 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
 
 def _parse_translation_config(cfg: dict[str, Any]) -> tuple[str, str]:
-    """Return (provider, model) from the models.translation config entry.
-
-    Supports both the new dict format and the legacy plain-string format:
-        # new
-        translation:
-          provider: openai
-          model: gpt-4.1
-        # legacy (treated as together)
-        translation: "Qwen/Qwen3.5-397B-A17B"
-    """
     entry = cfg["models"]["translation"]
     if isinstance(entry, dict):
         return entry.get("provider", "together"), entry["model"]
@@ -28,13 +20,11 @@ def _parse_translation_config(cfg: dict[str, Any]) -> tuple[str, str]:
 
 
 def get_translation_model(cfg: dict[str, Any]) -> str:
-    """Return the model name string for translation."""
     _, model = _parse_translation_config(cfg)
     return model
 
 
 def get_translation_provider(cfg: dict[str, Any]) -> str:
-    """Return 'openai' or 'together'."""
     provider, _ = _parse_translation_config(cfg)
     return provider
 
@@ -45,12 +35,6 @@ def make_translation_client(
     together_key_override: str | None = None,
     openai_key_override: str | None = None,
 ):
-    """Create the appropriate chat client based on the translation provider config.
-
-    *together_key_override* is used when provider is 'together'.
-    *openai_key_override* is used when provider is 'openai'.
-    Each falls back to the corresponding environment variable if not provided.
-    """
     provider, _ = _parse_translation_config(cfg)
 
     if provider == "openai":
@@ -60,26 +44,28 @@ def make_translation_client(
             raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
         return OpenAI(api_key=api_key)
 
-    from together import Together
-    api_key = together_key_override or os.environ.get("TOGETHER_API_KEY")
-    if not api_key:
-        raise RuntimeError("TOGETHER_API_KEY environment variable is not set.")
-    return Together(api_key=api_key)
+    if provider == "deepseek":
+        from openai import OpenAI
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY environment variable is not set.")
+        base_url = os.environ.get("DEEPSEEK_BASE_URL", _DEEPSEEK_BASE_URL)
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    if provider == "together":
+        from together import Together
+        api_key = together_key_override or os.environ.get("TOGETHER_API_KEY")
+        if not api_key:
+            raise RuntimeError("TOGETHER_API_KEY environment variable is not set.")
+        return Together(api_key=api_key)
+
+    raise ValueError(f"Unsupported translation provider: {provider}")
 
 
 # ── Chat (video Q&A) client ─────────────────────────────────
 
-def _parse_chat_config(cfg: dict[str, Any]) -> tuple[str, str]:
-    """Return (provider, model) from the models.chat config entry.
 
-    Supports both the dict format and the legacy plain-string format:
-        # current
-        chat:
-          provider: together
-          model: Qwen/Qwen3.5-397B-A17B
-        # legacy
-        chat: "Qwen/Qwen3.5-397B-A17B"
-    """
+def _parse_chat_config(cfg: dict[str, Any]) -> tuple[str, str]:
     entry = cfg["models"]["chat"]
     if isinstance(entry, dict):
         return entry.get("provider", "together"), entry["model"]
@@ -102,11 +88,6 @@ def make_chat_client(
     together_key_override: str | None = None,
     openai_key_override: str | None = None,
 ):
-    """Create the chat client based on ``models.chat.provider``.
-
-    Independent from translation because chat needs a vision-language model;
-    the translation provider may not host one.
-    """
     provider, _ = _parse_chat_config(cfg)
 
     if provider == "openai":
@@ -116,58 +97,70 @@ def make_chat_client(
             raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
         return OpenAI(api_key=api_key)
 
-    from together import Together
-    api_key = together_key_override or os.environ.get("TOGETHER_API_KEY")
-    if not api_key:
-        raise RuntimeError("TOGETHER_API_KEY environment variable is not set.")
-    return Together(api_key=api_key)
+    if provider == "together":
+        from together import Together
+        api_key = together_key_override or os.environ.get("TOGETHER_API_KEY")
+        if not api_key:
+            raise RuntimeError("TOGETHER_API_KEY environment variable is not set.")
+        return Together(api_key=api_key)
+
+    raise ValueError(f"Unsupported chat provider: {provider}")
 
 
 # ── Startup validation ──────────────────────────────────────
 
-_PROVIDER_ENV_KEY = {
-    "together":   "TOGETHER_API_KEY",
-    "openai":     "OPENAI_API_KEY",
-    "elevenlabs": "ELEVENLABS_API_KEY",
+_PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {
+    "together": ("TOGETHER_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+    "elevenlabs": ("ELEVENLABS_API_KEY",),
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "volcengine": (),
+}
+
+_VOLCENGINE_ENV_KEYS = {
+    "transcription": (
+        "VOLCENGINE_ASR_APP_KEY",
+        "VOLCENGINE_ASR_RESOURCE_ID",
+    ),
+    "tts": (
+        "VOLCENGINE_TTS_API_KEY",
+        "VOLCENGINE_TTS_RESOURCE_ID",
+    ),
 }
 
 
+def _env_keys_for_provider(provider: str, stage: str | None = None) -> tuple[str, ...]:
+    if provider == "cartesia":
+        provider = "together"
+    if provider == "volcengine" and stage in _VOLCENGINE_ENV_KEYS:
+        return _VOLCENGINE_ENV_KEYS[stage]
+    try:
+        return _PROVIDER_ENV_KEYS[provider]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported provider: {provider}") from exc
+
+
 def required_env_keys(cfg: dict[str, Any]) -> set[str]:
-    """Return the env var names required by the active provider config."""
     keys: set[str] = set()
 
-    keys.add(_PROVIDER_ENV_KEY[get_transcription_provider(cfg)])
-    keys.add(_PROVIDER_ENV_KEY[get_translation_provider(cfg)])
-    keys.add(_PROVIDER_ENV_KEY[get_chat_provider(cfg)])
+    keys.update(_env_keys_for_provider(get_transcription_provider(cfg), "transcription"))
+    keys.update(_env_keys_for_provider(get_translation_provider(cfg), "translation"))
 
     tts_entry = cfg["models"].get("tts")
     if isinstance(tts_entry, dict):
         tts_provider = tts_entry.get("provider", "together")
     else:
         tts_provider = "together"
-    if tts_provider == "cartesia":  # legacy alias
-        tts_provider = "together"
-    keys.add(_PROVIDER_ENV_KEY[tts_provider])
+    keys.update(_env_keys_for_provider(tts_provider, "tts"))
 
     return keys
 
 
 def validate_env(cfg: dict[str, Any]) -> list[str]:
-    """Return env var names that are required but unset (sorted, deduped)."""
     return sorted(k for k in required_env_keys(cfg) if not os.environ.get(k))
 
 
 def _parse_transcription_config(cfg: dict[str, Any]) -> tuple[str, str]:
-    """Return (provider, model) from the models.transcription config entry.
-
-    Supports both the new dict format and the legacy plain-string format:
-        # new
-        transcription:
-          provider: openai
-          model: whisper-1
-        # legacy (treated as together)
-        transcription: "openai/whisper-large-v3"
-    """
     entry = cfg["models"]["transcription"]
     if isinstance(entry, dict):
         return entry.get("provider", "together"), entry["model"]
@@ -190,12 +183,6 @@ def make_transcription_client(
     together_key_override: str | None = None,
     openai_key_override: str | None = None,
 ):
-    """Create the appropriate Whisper client based on the transcription provider config.
-
-    The resulting client exposes `audio.transcriptions.create(...)` — both the
-    Together and OpenAI SDKs share that surface, so the transcriber code does
-    not need to branch.
-    """
     provider, _ = _parse_transcription_config(cfg)
 
     if provider == "openai":
@@ -205,8 +192,15 @@ def make_transcription_client(
             raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
         return OpenAI(api_key=api_key)
 
-    from together import Together
-    api_key = together_key_override or os.environ.get("TOGETHER_API_KEY")
-    if not api_key:
-        raise RuntimeError("TOGETHER_API_KEY environment variable is not set.")
-    return Together(api_key=api_key)
+    if provider == "volcengine":
+        from .volcengine_asr import make_volcengine_transcription_client
+        return make_volcengine_transcription_client()
+
+    if provider == "together":
+        from together import Together
+        api_key = together_key_override or os.environ.get("TOGETHER_API_KEY")
+        if not api_key:
+            raise RuntimeError("TOGETHER_API_KEY environment variable is not set.")
+        return Together(api_key=api_key)
+
+    raise ValueError(f"Unsupported transcription provider: {provider}")

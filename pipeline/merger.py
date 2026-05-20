@@ -380,6 +380,7 @@ def build_aligned_video(
         prev_end = seg.end
 
     trail = total_duration - prev_end
+    print(f"      [Merge] total_duration={total_duration:.1f}s, prev_end={prev_end:.1f}s, trail={trail:.1f}s")
     if trail > min_gap:
         trail_path = str(tmp_dir / "trail.ts")
         chunks.append(("gap", (video_path, prev_end, total_duration, trail_path, fps)))
@@ -388,6 +389,9 @@ def build_aligned_video(
             video_audio_plan.append(("orig_gap", prev_end, total_duration, gap_vol))
         else:
             video_audio_plan.append(("silence_va", trail))
+        print(f"      [Merge] Added trail gap: {trail:.1f}s")
+    else:
+        print(f"      [Merge] No trail gap (trail={trail:.1f}s <= min_gap={min_gap})")
 
     chunks_to_build = (
         [c for c in chunks if c[0] != "gap"] if gaps_already_built else chunks

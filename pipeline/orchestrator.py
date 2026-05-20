@@ -8,6 +8,8 @@ same five-step flow.
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import shutil
 import tempfile
 import threading
@@ -16,10 +18,11 @@ from pathlib import Path
 from typing import Callable
 
 from . import config as pipeline_config
+from .cache import StageCache
 from .costs import CostTracker
 from .extractor import extract_audio, get_video_duration
 from .languages import language_code
-from .llm_client import make_transcription_client, make_translation_client
+from .llm_client import make_transcription_client, make_translation_client, get_transcription_model, get_transcription_provider
 from .merger import build_aligned_video, build_gap_chunks, generate_srt, prepare_merge
 from .styles import StyleProfile, resolve as resolve_style
 from .transcriber import Segment, merge_continuous_segments, split_into_sentences, transcribe
@@ -43,6 +46,8 @@ class DubOptions:
     voiceover: bool = True                # mix original audio with the dub
     bake_voiceover: bool = True           # True (CLI): bake into video; False (API): export separate track
     subtitles: bool = True                # generate SRT alongside the video
+    audio_url: str | None = None          # V3 URL-based ASR (Volcengine), skips file upload
+    cache_dir: str | None = None          # disk cache dir for stage results (debugging)
 
     # BYOK overrides (used by the web app when a user supplies their own keys)
     together_api_key: str | None = None
@@ -86,6 +91,26 @@ def dub_video(
         together_key_override=opts.together_api_key,
         openai_key_override=opts.openai_api_key,
     )
+    if opts.audio_url:
+        transcription_client.audio_url = opts.audio_url
+
+    # ── Cache setup ──────────────────────────────────────────
+    cache: StageCache | None = None
+    if opts.cache_dir:
+        cache_key = hashlib.sha256(
+            _json.dumps(
+                {
+                    "input": input_path,
+                    "lang": opts.target_language,
+                    "source": opts.source_language,
+                    "voice": opts.voice,
+                    "style": style.name,
+                    "models": cfg.get("models", {}),
+                },
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()[:16]
+        cache = StageCache(key=cache_key, cache_dir=opts.cache_dir)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="vidtrans_"))
     try:
@@ -98,29 +123,45 @@ def dub_video(
         tracker.audio_minutes = total_duration / 60.0
         tracker.record_step("Audio extraction")
 
+        # ── 2. Transcription ─────────────────────────────────
         _check_cancel(is_cancelled)
-        _emit(on_progress, 2, f"Transcribing with Whisper Large v3… (duration: {total_duration:.0f}s)")
-        segments = transcribe(audio_path, transcription_client)
-        tracker.record_step("Transcription (Whisper)")
+        asr_provider = get_transcription_provider(cfg)
+        asr_model = get_transcription_model(cfg)
+        _emit(on_progress, 2, f"Transcribing with {asr_provider}/{asr_model}… (duration: {total_duration:.0f}s)")
+        segments = cache.get_transcription() if cache else None
+        if segments is None:
+            segments = transcribe(audio_path, transcription_client)
+            if cache:
+                cache.put_transcription(segments)
+                print(f"      [Cache] transcription saved")
+        else:
+            print(f"      [Cache] transcription loaded ({len(segments)} segments)")
+        tracker.record_step(f"Transcription ({asr_provider})")
 
         lang_code = language_code(opts.target_language)
         segments = merge_continuous_segments(segments)
 
+        # ── 3. Translation ───────────────────────────────────
         _check_cancel(is_cancelled)
-        _emit(on_progress, 3, f"Translating {len(segments)} segments to {opts.target_language} (style: {style.name})…")
-        translated = translate_segments(
-            segments, opts.target_language, translation_client, opts.source_language,
-            tracker=tracker,
-            style_directives=style.translation_directives,
-            style_temperature=style.temperature,
-        )
+        translated = cache.get_translation() if cache else None
+        if translated is None:
+            _emit(on_progress, 3, f"Translating {len(segments)} segments to {opts.target_language} (style: {style.name})…")
+            translated = translate_segments(
+                segments, opts.target_language, translation_client, opts.source_language,
+                tracker=tracker,
+                style_directives=style.translation_directives,
+                style_temperature=style.temperature,
+            )
+            translated = merge_continuous_segments(translated, max_duration=float("inf"))
+            translated = split_into_sentences(translated)
+            if cache:
+                cache.put_translation(translated)
+                print(f"      [Cache] translation saved")
+        else:
+            print(f"      [Cache] translation loaded ({len(translated)} segments)")
         tracker.record_step("Translation (LLM)")
-        # Aggressive re-merge → re-split: gives the translator full paragraph
-        # context (better quality) while still producing sentence-level units
-        # for TTS and subtitles (1-to-1 alignment, readable line lengths).
-        translated = merge_continuous_segments(translated, max_duration=float("inf"))
-        translated = split_into_sentences(translated)
 
+        # ── 4. TTS ───────────────────────────────────────────
         _check_cancel(is_cancelled)
         effective_voice = _resolve_voice(opts.voice, lang_code, cfg)
         tts_label = cfg["models"]["tts"]["model"]
@@ -148,16 +189,28 @@ def dub_video(
         gap_thread = threading.Thread(target=_build_gaps, daemon=True)
         gap_thread.start()
 
-        tts_paths = synthesize_segments(
-            translated, effective_voice, str(tts_dir),
-            language=lang_code,
-            tracker=tracker,
-            speed=style.tts_speed,
-            emotion=style.tts_emotion,
-            together_api_key=opts.together_api_key,
-            elevenlabs_api_key=opts.elevenlabs_api_key,
-            openai_api_key=opts.openai_api_key,
-        )
+        # Check TTS cache
+        tts_paths: list[str] | None = None
+        if cache:
+            cached_paths = cache.get_tts_paths()
+            if cached_paths and all(Path(p).exists() for p in cached_paths):
+                tts_paths = cached_paths
+                print(f"      [Cache] TTS loaded ({len(tts_paths)} files)")
+
+        if tts_paths is None:
+            tts_paths = synthesize_segments(
+                translated, effective_voice, str(tts_dir),
+                language=lang_code,
+                tracker=tracker,
+                speed=style.tts_speed,
+                emotion=style.tts_emotion,
+                together_api_key=opts.together_api_key,
+                elevenlabs_api_key=opts.elevenlabs_api_key,
+                openai_api_key=opts.openai_api_key,
+            )
+            if cache:
+                cache.put_tts_paths(tts_paths)
+                print(f"      [Cache] TTS saved ({len(tts_paths)} files)")
         gap_thread.join()
         if gap_exc:
             raise gap_exc[0]

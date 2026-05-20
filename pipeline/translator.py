@@ -1,4 +1,4 @@
-"""Translate transcript segments via configurable LLM provider (OpenAI or Together AI)."""
+"""Translate transcript segments via configurable LLM provider."""
 
 from __future__ import annotations
 
@@ -69,10 +69,23 @@ SINGLE_SCHEMA = {
 
 
 def _together_extra() -> dict[str, Any]:
-    """Return extra_body kwargs only when the translation provider is Together."""
     if get_translation_provider(_conf.get()) == "together":
         return {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
     return {}
+
+
+def _response_format(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    provider = get_translation_provider(_conf.get())
+    if provider == "deepseek":
+        return {"type": "json_object"}
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "strict": True,
+            "schema": schema,
+        },
+    }
 
 
 def _translate_single(
@@ -113,14 +126,7 @@ def _translate_single(
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=temp,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "single_translation",
-                        "strict": True,
-                        "schema": SINGLE_SCHEMA,
-                    },
-                },
+                response_format=_response_format("single_translation", SINGLE_SCHEMA),
                 **_together_extra(),
             )
             if tracker and hasattr(response, "usage") and response.usage:
@@ -183,14 +189,7 @@ def _try_batch(
                     {"role": "user", "content": prompt},
                 ],
                 temperature=temp,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "translation_response",
-                        "strict": True,
-                        "schema": BATCH_SCHEMA,
-                    },
-                },
+                response_format=_response_format("translation_response", BATCH_SCHEMA),
                 **_together_extra(),
             )
 

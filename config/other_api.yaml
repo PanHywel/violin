@@ -1,4 +1,4 @@
-# Example override — premium stack: OpenAI for transcription/translation,
+# Example override — legacy premium stack: OpenAI for transcription/translation,
 # ElevenLabs for TTS. Useful as a reference when wiring up alternate providers.
 # Requires OPENAI_API_KEY and ELEVENLABS_API_KEY in .env.
 # Load with:  uv run run_api.py --config config/other_api.yaml

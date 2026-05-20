@@ -18,11 +18,11 @@ Available as a **CLI**, a **FastAPI web app**, and a **Claude Code skill**.
 
 ## ✨ Features
 
-- **33 target languages** with handpicked native-speaker voices for the 16 most-used ones (Cartesia Sonic 3 + ElevenLabs)
+- **33 target languages** with handpicked native-speaker voices for the 16 most-used ones (Volcengine TTS by default; Cartesia Sonic 3 + ElevenLabs optional)
 - **In-video Q&A** — ask questions about any moment in the dubbed video; answers use nearby subtitles plus sampled frames
 - **Natural-language voice picker** — describe the voice you want, an LLM picks from the catalog
 - **6 style profiles** *(experimental)* — standard / kids / academic / casual / storyteller / news
-- **Pluggable stack** — Together / OpenAI / ElevenLabs interchangeable for every stage, one YAML
+- **Pluggable stack** — DeepSeek / Volcengine / Together / OpenAI / ElevenLabs interchangeable by YAML
 
 ---
 
@@ -41,7 +41,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv if you don't have
 uv tool install violin                            # recommended — faster, isolated
 # or: pip install violin                          # if you'd rather install into your current Python env
 
-export TOGETHER_API_KEY=...                       # get one at https://api.together.ai (add to ~/.zshrc to persist)
+export DEEPSEEK_API_KEY=...
+export VOLCENGINE_ASR_APP_KEY=...
+export VOLCENGINE_ASR_RESOURCE_ID=...  # usually "volc.bigasr.auc"
+export VOLCENGINE_TTS_API_KEY=...
+export VOLCENGINE_TTS_RESOURCE_ID=...  # usually "seed-tts-1.0" (or "seed-tts-2.0" for TTS2.0 voices)
 ```
 
 Three ways to use it:
@@ -74,7 +78,7 @@ claude
 git clone https://github.com/shang-zhu/violin.git
 cd violin
 uv sync
-cp .env.example .env             # then fill in TOGETHER_API_KEY
+cp .env.example .env             # then fill in DeepSeek + Volcengine keys
 uv run main.py lecture.mp4 lecture_zh.mp4 --language Chinese
 ```
 
@@ -104,11 +108,11 @@ Video
   │
   ├─ ffmpeg ─────────────────────► Extract audio (16 kHz WAV)
   │
-  ├─ Whisper Large v3 ────────────► Word-level timestamps → sentence segments
+  ├─ Volcengine ASR ─────────────► Word-level timestamps → sentence segments
   │
-  ├─ LLM (DeepSeek V4 Pro by default) ──► Translate each segment, respecting style profile
+  ├─ DeepSeek ───────────────────► Translate each segment, respecting style profile
   │
-  ├─ TTS (Cartesia Sonic 3 by default) ─► Synthesize dubbed audio per segment
+  ├─ Volcengine TTS ─────────────► Synthesize dubbed audio per segment
   │
   └─ ffmpeg ─────────────────────► Speed-align video to dubbed audio,
                                     concat with freeze-frame fallback,
@@ -128,14 +132,14 @@ Override any default by writing your own YAML and passing it with `--config my.y
 # config/default.yaml — pick the stack you want
 models:
   transcription:
-    provider: together                  # together | openai
-    model: openai/whisper-large-v3      # together → openai/whisper-large-v3 | openai → whisper-1
+    provider: volcengine                # together | openai | volcengine
+    model: zh-CN                        # together → openai/whisper-large-v3 | openai → whisper-1 | volcengine → language code
   translation:
-    provider: together                  # together | openai
-    model: deepseek-ai/DeepSeek-V4-Pro  # together → deepseek-ai/DeepSeek-V4-Pro | openai → gpt-5.5
+    provider: deepseek                  # together | openai | deepseek
+    model: deepseek-chat                # together → deepseek-ai/DeepSeek-V4-Pro | openai → gpt-5.5 | deepseek → deepseek-chat
   tts:
-    provider: together                  # together | elevenlabs | openai
-    model: cartesia/sonic-3             # together → cartesia/sonic-3 | elevenlabs → eleven_v3 | openai → tts-1-hd
+    provider: volcengine                # together | elevenlabs | openai | volcengine
+    model: volcano_tts                  # together → cartesia/sonic-3 | elevenlabs → eleven_v3 | openai → tts-1-hd | volcengine → volcano_tts
 ```
 
 ### Production overrides
@@ -146,12 +150,22 @@ A starter `config/prod.yaml` is included for public deployments. It adds upload 
 
 | Variable | When required | Description |
 |----------|---------------|-------------|
-| `TOGETHER_API_KEY` | **Recommended** — covers every stage with the default config | Together AI API key |
+| `DEEPSEEK_API_KEY` | Translation uses `provider: deepseek` | DeepSeek API key |
+| `DEEPSEEK_BASE_URL` | Optional | DeepSeek-compatible base URL override |
+| `VOLCENGINE_ASR_APP_KEY` | Transcription uses `provider: volcengine` | Volcengine ASR API key |
+| `VOLCENGINE_ASR_RESOURCE_ID` | Transcription uses `provider: volcengine` | Volcengine ASR resource ID (e.g. `volc.seedasr.auc`) |
+| `VOLCENGINE_ASR_RESOURCE_ID` | Transcription uses `provider: volcengine` | Volcengine ASR resource ID (e.g. `volc.bigasr.auc`) |
+| `VOLCENGINE_ASR_BASE_URL` | Optional | Volcengine ASR submit endpoint override |
+| `VOLCENGINE_TTS_API_KEY` | TTS uses `provider: volcengine` | Volcengine TTS API key |
+| `VOLCENGINE_TTS_RESOURCE_ID` | TTS uses `provider: volcengine` | Volcengine TTS resource ID (`seed-tts-1.0` for TTS1.0, `seed-tts-2.0` for TTS2.0) |
+| `VOLCENGINE_TTS_BASE_URL` | Optional | Volcengine TTS endpoint override |
+| `VOLCENGINE_TTS_VOICE_TYPE` | Optional | Raw Volcengine voice type when not using built-in voice aliases |
+| `TOGETHER_API_KEY` | Any translation/transcription/TTS stage uses `provider: together`, or server-side video chat is enabled | Together AI API key |
 | `OPENAI_API_KEY` | Any stage uses `provider: openai` | Covers `whisper-1`, GPT models, and `tts-1` |
 | `ELEVENLABS_API_KEY` | TTS uses `provider: elevenlabs` | ElevenLabs API key |
 | `CORS_ORIGINS` | Optional | Comma-separated allowed origins (default: `*`) |
 
-> You only need keys for the providers you actually pick. Pure-OpenAI deployments (all stages on `openai`) work too — `OPENAI_API_KEY` alone is enough. Same idea for ElevenLabs.
+> You only need keys for the providers you actually pick. The default config now expects DeepSeek for translation and Volcengine for ASR/TTS. Pure-OpenAI or Together-based deployments still work by changing `models:` in YAML and setting the matching keys.
 
 ---
 
@@ -246,7 +260,7 @@ Job data lives under `jobs/{id}/`. Set `api.job_ttl_hours` to auto-delete jobs o
 
 ## 🌍 Supported languages
 
-Violin supports **33 target languages**. The 16 below ship with handpicked native-speaker voices for each provider; the rest fall back to the English voice catalog (which is multilingual under both Cartesia Sonic 3 and ElevenLabs `eleven_v3`).
+Violin supports **33 target languages**. Volcengine TTS ships with a minimal built-in Chinese/English voice catalog by default; Cartesia and ElevenLabs retain the broader handpicked catalog below, and other languages fall back to the English voice catalog.
 
 Ordered by native-speaker population.
 
@@ -293,4 +307,4 @@ This is a personal open-source project, not a Together AI product. Users are res
 
 ## 🙏 Acknowledgements
 
-Built on top of [Together AI](https://together.ai), [Whisper](https://github.com/openai/whisper), [Cartesia Sonic 3](https://cartesia.ai), [ElevenLabs](https://elevenlabs.io), [FastAPI](https://fastapi.tiangolo.com/), and [ffmpeg](https://ffmpeg.org).
+Built on top of [DeepSeek](https://www.deepseek.com), Volcengine speech services, [Together AI](https://together.ai), [Whisper](https://github.com/openai/whisper), [Cartesia Sonic 3](https://cartesia.ai), [ElevenLabs](https://elevenlabs.io), [FastAPI](https://fastapi.tiangolo.com/), and [ffmpeg](https://ffmpeg.org).

@@ -72,6 +72,8 @@ def translate_video(
     style=None,
     voiceover: bool = True,
     timings_out: str | None = None,
+    audio_url: str | None = None,
+    no_cache: bool = False,
 ) -> None:
     if style is None:
         style = resolve_style("standard")
@@ -83,6 +85,7 @@ def translate_video(
     srt_path = str(out_p.with_suffix(".srt")) if subtitles else None
     orig_audio_path = str(out_p.with_stem(out_p.stem + "_original").with_suffix(".m4a")) if voiceover else None
 
+    cache_dir = None if no_cache else ".violin_cache"
     opts = DubOptions(
         target_language=target_language,
         source_language=source_language,
@@ -91,6 +94,8 @@ def translate_video(
         voiceover=voiceover,
         bake_voiceover=True,
         subtitles=subtitles,
+        audio_url=audio_url,
+        cache_dir=cache_dir,
     )
 
     result = dub_video(
@@ -160,6 +165,14 @@ def main() -> None:
         help="Path to a YAML config file (overrides config/default.yaml)"
     )
     parser.add_argument(
+        "--audio-url", default=None,
+        help="Public audio URL for V3 Volcengine ASR (skips file upload)"
+    )
+    parser.add_argument(
+        "--no-cache", action="store_true",
+        help="Disable disk cache for intermediate results"
+    )
+    parser.add_argument(
         "--timings-out", default=None,
         help="Write per-step wall-clock timings as JSON to this path on success"
     )
@@ -212,6 +225,8 @@ def main() -> None:
         style,
         voiceover,
         timings_out=args.timings_out,
+        audio_url=args.audio_url,
+        no_cache=args.no_cache,
     )
 
 

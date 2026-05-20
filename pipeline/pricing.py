@@ -8,16 +8,19 @@ Sources (re-check these pages when bumping LAST_UPDATED):
   - Together AI:  https://www.together.ai/pricing
   - OpenAI:       https://openai.com/api/pricing/
   - ElevenLabs:   https://elevenlabs.io/pricing
+  - DeepSeek:     https://api-docs.deepseek.com/quick_start/pricing
+  - Volcengine:   check the BytePlus/Volcengine console for ASR/TTS contract rates
 """
 
 from __future__ import annotations
 
-LAST_UPDATED = "2026-05-12"   # bump this whenever any rate below changes
+LAST_UPDATED = "2026-05-19"   # bump this whenever any rate below changes
 
 # USD per audio minute.
 WHISPER: dict[str, float] = {
     "together": 0.0015,   # Together AI — Whisper Large v3
     "openai":   0.006,    # OpenAI — whisper-1
+    "volcengine": 0.0,    # Configure to your Volcengine ASR contract rate.
 }
 
 # USD per 1,000,000 characters.
@@ -25,12 +28,14 @@ TTS: dict[str, dict[str, float]] = {
     "together":   {"per_m_characters": 65.00},   # Cartesia Sonic 3 ($65/M). Kokoro $4/M, Orpheus $15/M when added.
     "elevenlabs": {"per_m_characters": 165.00},  # eleven_v3 (~$0.165 / 1k chars on Creator tier)
     "openai":     {"per_m_characters": 30.00},   # tts-1-hd ($30/M); tts-1 is $15/M
+    "volcengine": {"per_m_characters": 0.00},    # Configure to your Volcengine TTS contract rate.
 }
 
 # USD per 1,000,000 tokens (input / output split).
 TRANSLATION: dict[str, dict[str, float]] = {
     "together": {"per_m_input_tokens": 0.30, "per_m_output_tokens": 1.20},
     "openai":   {"per_m_input_tokens": 0.75, "per_m_output_tokens": 4.50},
+    "deepseek": {"per_m_input_tokens": 0.27, "per_m_output_tokens": 1.10},
 }
 
 
